@@ -8,6 +8,7 @@ from django.contrib.auth.models import User as DjangoUser
 from django.core.mail import send_mail
 from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone as tz
 
 from monitor.decorators import is_htmx, require_admin, require_operator
@@ -242,7 +243,7 @@ def delete_node(request, node_id):
 @require_admin
 def create_endpoint(request):
     if request.method != 'POST':
-        return redirect('monitor:settings_resources')
+        return redirect(f"{reverse('monitor:settings_resources')}?tab=endpoints")
     org = _get_org(request.user)
     form = InferenceEndpointForm(request.POST)
     if form.is_valid():
@@ -252,7 +253,7 @@ def create_endpoint(request):
             engine=form.cleaned_data['engine'],
             url=form.cleaned_data.get('url', ''),
         )
-    return redirect('monitor:settings_resources')
+    return redirect(f"{reverse('monitor:settings_resources')}?tab=endpoints")
 
 
 @login_required
