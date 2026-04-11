@@ -279,3 +279,50 @@ class CostEngineAtomicSnapshotTest(TestCase):
         # Exactly one org's rows should be committed (org A), not both, not neither.
         self.assertEqual(after_count - before_count, 1,
                          "Expected org A's snapshot to commit and org B's to roll back")
+
+
+# ── Task 7: AlertRuleForm slack webhook validator ─────────────────────────────
+
+class AlertRuleFormSlackValidatorTest(TestCase):
+    def test_alert_rule_form_rejects_non_slack_url(self):
+        from monitor.forms import AlertRuleForm
+
+        form = AlertRuleForm(data={
+            'name': 'Test Rule',
+            'metric': 'gpu_utilization_low',
+            'threshold_value': 10,
+            'duration_seconds': 60,
+            'slack_webhook_url': 'https://evil.com/hook',
+        })
+        self.assertFalse(form.is_valid())
+        self.assertIn('slack_webhook_url', form.errors)
+        self.assertTrue(
+            any('slack.com' in err.lower() or 'hooks.slack.com' in err.lower()
+                for err in form.errors['slack_webhook_url']),
+            f"Expected slack.com reference in error: {form.errors['slack_webhook_url']}",
+        )
+
+    def test_alert_rule_form_accepts_valid_slack_url(self):
+        from monitor.forms import AlertRuleForm
+
+        form = AlertRuleForm(data={
+            'name': 'Test Rule',
+            'metric': 'gpu_utilization_low',
+            'threshold_value': 10,
+            'duration_seconds': 60,
+            'slack_webhook_url': 'https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX',
+        })
+        self.assertTrue(form.is_valid(), f"Form should be valid but got: {form.errors}")
+
+    def test_alert_rule_form_accepts_empty_slack_url(self):
+        """Slack webhook URL is optional on the form."""
+        from monitor.forms import AlertRuleForm
+
+        form = AlertRuleForm(data={
+            'name': 'Test Rule',
+            'metric': 'gpu_utilization_low',
+            'threshold_value': 10,
+            'duration_seconds': 60,
+            'slack_webhook_url': '',
+        })
+        self.assertTrue(form.is_valid(), f"Empty slack URL should be valid: {form.errors}")

@@ -35,6 +35,14 @@ class AlertRuleForm(forms.ModelForm):
             'slack_webhook_url': forms.URLInput(attrs={'placeholder': 'https://hooks.slack.com/\u2026'}),
         }
 
+    def clean_slack_webhook_url(self):
+        url = self.cleaned_data.get('slack_webhook_url') or ''
+        if url and not url.startswith('https://hooks.slack.com/'):
+            raise forms.ValidationError(
+                "Must be a valid https://hooks.slack.com/ webhook URL"
+            )
+        return url
+
 
 class GPUClusterForm(forms.Form):
     name = forms.CharField(
@@ -50,9 +58,10 @@ class GPUClusterRenameForm(forms.Form):
 class InferenceEndpointForm(forms.Form):
     ENGINE_CHOICES = [
         ('vllm', 'vLLM'),
-        ('triton', 'Triton'),
         ('tgi', 'TGI'),
-        ('other', 'Other'),
+        ('triton', 'Triton'),
+        ('ollama', 'Ollama'),
+        ('custom', 'Custom'),
     ]
     name = forms.CharField(max_length=255)
     engine = forms.ChoiceField(choices=ENGINE_CHOICES)
@@ -65,6 +74,7 @@ class InferenceEndpointForm(forms.Form):
 class InviteForm(forms.Form):
     ROLE_CHOICES = [
         ('viewer', 'Viewer'),
+        ('operator', 'Operator'),
         ('admin', 'Admin'),
         ('owner', 'Owner'),
     ]
@@ -81,6 +91,13 @@ class AcceptInviteForm(forms.Form):
         widget=forms.PasswordInput,
         label='Confirm password',
     )
+
+    def clean_password(self):
+        password = self.cleaned_data.get('password')
+        if password:
+            from django.contrib.auth.password_validation import validate_password
+            validate_password(password)
+        return password
 
     def clean(self):
         cleaned = super().clean()
