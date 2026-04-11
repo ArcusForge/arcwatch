@@ -1,11 +1,23 @@
 import os
+import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Detect test runs so production-only security hardening (SSL redirect, HSTS,
+# secure cookies) doesn't break Django's test client, which uses HTTP. Also
+# used to force SQLite for tests so the suite doesn't require a running
+# Postgres instance. Covers both `pytest` and `manage.py test` invocations.
+_IS_TESTING = (
+    'pytest' in sys.argv[0]
+    or any('pytest' in arg for arg in sys.argv)
+    or (len(sys.argv) > 1 and sys.argv[1] == 'test')
+    or os.environ.get('PYTEST_CURRENT_TEST') is not None
+)
+
 # Security
 SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-insecure-fallback-key-change-in-production')
-DEBUG = os.environ.get('DEBUG', 'True') == 'True'
+DEBUG = os.environ.get('DEBUG', 'False').lower() in ('true', '1', 'yes')
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
 # Required for Django 4.0+ when behind HTTPS reverse proxy (ALB → nginx)
@@ -39,6 +51,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'monitor.middleware.TenantMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -64,8 +77,10 @@ TEMPLATES = [
 WSGI_APPLICATION = 'arcwatch.wsgi.application'
 
 # Database
-# When USE_SQLITE=1 (e.g. local testing without Docker), use SQLite.
-if os.environ.get('USE_SQLITE', '0') == '1':
+# Always use SQLite during test runs so the suite doesn't need a running
+# Postgres. Also use SQLite when USE_SQLITE=1 is explicitly set (e.g. local
+# dev without Docker).
+if _IS_TESTING or os.environ.get('USE_SQLITE', '0') == '1':
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
@@ -123,7 +138,7 @@ DEFAULT_FROM_EMAIL = 'noreply@arcwatch.local'
 # Django REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',
+        'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
@@ -189,3 +204,17 @@ LOGGING = {
         'level': 'INFO',
     },
 }
+
+# Security headers (production only — skipped under DEBUG and during test runs
+# because Django's test client uses HTTP, which would otherwise 301 to HTTPS
+# before any view runs).
+if not DEBUG and not _IS_TESTING:
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_SSL_REDIRECT = True
+
+# Session timeout (8 hours)
+SESSION_COOKIE_AGE = 28800
