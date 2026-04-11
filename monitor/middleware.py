@@ -27,17 +27,17 @@ logger = logging.getLogger(__name__)
 
 ALLOWLIST_EXACT = frozenset({
     "/",
-    "/accounts/login/",
-    "/accounts/logout/",
-    "/accounts/signup/",
-    "/accounts/password_reset/",
     "/api/health/",
     "/api/ready/",
     "/no-organization/",
 })
 
+# `/accounts/` covers Django contrib.auth URLs (login, logout, signup,
+# password_reset, password_reset/done, reset/<uidb64>/<token>/, reset/done/)
+# AND monitor/urls_accounts.py (accept-invite). Admin is intentionally NOT
+# allowlisted — superusers still need tenant context via their profile.
 ALLOWLIST_PREFIX = (
-    "/accounts/accept-invite/",
+    "/accounts/",
     "/static/",
     "/media/",
 )
