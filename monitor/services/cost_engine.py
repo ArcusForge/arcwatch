@@ -180,13 +180,13 @@ def get_cost_summary(org, period_hours: int = 24) -> dict:
                 COALESCE(model_name, 'unknown') AS model_name,
                 COALESCE(SUM(cost_this_period), 0)  AS total_cost,
                 COALESCE(SUM(waste_this_period), 0) AS total_waste,
-                COUNT(*) * {INTERVAL_SECONDS} / 3600.0 AS gpu_hours
+                COUNT(*) * %s / 3600.0 AS gpu_hours
             FROM cost_snapshots
             WHERE {interval_filter}
               AND gpu_uuid IN ({placeholders})
             GROUP BY model_name
             ORDER BY total_cost DESC
-        """, interval_param + gpu_uuids)
+        """, [INTERVAL_SECONDS] + interval_param + gpu_uuids)
         by_model = [
             {
                 "model_name": r[0],
