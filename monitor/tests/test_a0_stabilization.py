@@ -88,3 +88,105 @@ class NoOrganizationViewTest(TestCase):
     def test_no_organization_view_url_name_reversible(self):
         from django.urls import reverse
         self.assertEqual(reverse("monitor:no_organization"), "/no-organization/")
+
+
+# ── Task 4: TenantMiddleware fail-closed ──────────────────────────────────────
+
+class TenantMiddlewareTest(TestCase):
+    """
+    Integration tests that exercise the real middleware stack.
+    Do NOT bypass the middleware with direct set_current_org() calls —
+    these tests exist specifically to verify the middleware itself.
+    """
+
+    def setUp(self):
+        self.org = _make_org("mw-test")
+
+    def test_tenant_middleware_fails_closed_on_missing_profile(self):
+        """User with no profile hitting a web path → redirect to /no-organization/."""
+        user = User.objects.create_user(username="no-profile", password="pw")
+        # Delete the auto-created profile to simulate the missing-profile path
+        user.profile.delete()
+        self.client.force_login(user)
+        response = self.client.get("/dashboard/")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/no-organization/", response["Location"])
+
+    def test_tenant_middleware_fails_closed_on_null_organization(self):
+        """User with profile but org=None → redirect to /no-organization/."""
+        user = User.objects.create_user(username="no-org", password="pw")
+        # signal-created profile exists with organization=None by default
+        self.client.force_login(user)
+        response = self.client.get("/dashboard/")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/no-organization/", response["Location"])
+
+    def test_tenant_middleware_json_response_for_api_paths(self):
+        """API path with no org → 403 JSON, not an HTML redirect."""
+        import json
+        user = User.objects.create_user(username="api-no-org", password="pw")
+        self.client.force_login(user)
+        response = self.client.get("/api/v1/ingest/gpu/")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response["Content-Type"], "application/json")
+        body = json.loads(response.content)
+        self.assertEqual(body["error"], "no_organization")
+
+    def test_tenant_middleware_redirects_for_web_paths(self):
+        """Web path with no org → 302 redirect to /no-organization/."""
+        user = User.objects.create_user(username="web-no-org", password="pw")
+        self.client.force_login(user)
+        response = self.client.get("/dashboard/")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/no-organization/", response["Location"])
+
+    def test_tenant_middleware_allowlist_health_endpoints_work_unauth(self):
+        """Health endpoints must be reachable without auth and without a tenant."""
+        response_health = self.client.get("/api/health/")
+        self.assertEqual(response_health.status_code, 200)
+        response_ready = self.client.get("/api/ready/")
+        # ready may be 200 or 503 depending on DB/redis; both are non-auth responses
+        self.assertIn(response_ready.status_code, (200, 503))
+
+    def test_tenant_middleware_allowlist_landing_page_works_unauth(self):
+        """The public landing page `/` must be reachable unauthenticated."""
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_tenant_middleware_sets_org_for_resolved_user(self):
+        """Authenticated user with a valid org → view runs successfully."""
+        user = _make_user_with_role("resolved-user", "admin", self.org)
+        self.client.force_login(user)
+        response = self.client.get("/dashboard/")
+        self.assertEqual(response.status_code, 200)
+
+
+class TenantMiddlewareCrossOrgLeakTest(TestCase):
+    """Red-team test: verify tenant isolation cannot leak across orgs."""
+
+    def test_cross_org_query_blocked(self):
+        """User in org A cannot see GPUs belonging to org B via the dashboard."""
+        from monitor.models import GPU, GPUCluster, GPUNode
+
+        org_a = _make_org("org-a")
+        org_b = _make_org("org-b")
+
+        # Create a GPU in org B
+        cluster_b = GPUCluster.objects_unscoped.create(organization=org_b, name="b-cluster")
+        node_b = GPUNode.objects_unscoped.create(
+            organization=org_b, cluster=cluster_b,
+            hostname="b-node-1", gpu_count=1, gpu_type="H100",
+        )
+        gpu_b = GPU.objects_unscoped.create(
+            organization=org_b, node=node_b,
+            uuid="GPU-B-UUID-0001", gpu_index=0,
+            current_model_name="H100 SXM", status="healthy",
+        )
+
+        # User in org A requests the dashboard — must not see GPU_B
+        user_a = _make_user_with_role("user-in-a", "viewer", org_a)
+        self.client.force_login(user_a)
+        response = self.client.get("/dashboard/")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"GPU-B-UUID-0001", response.content)
+        self.assertNotIn(b"b-node-1", response.content)
