@@ -190,3 +190,92 @@ class TenantMiddlewareCrossOrgLeakTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn(b"GPU-B-UUID-0001", response.content)
         self.assertNotIn(b"b-node-1", response.content)
+
+
+# ── Task 5: cost_engine per-org atomic ────────────────────────────────────────
+
+class CostEngineAtomicSnapshotTest(TestCase):
+    def test_cost_engine_partial_write_rollback(self):
+        """
+        When execute_values raises for org B, org A's snapshot must still
+        be committed (per-org atomic boundary, not one giant transaction).
+        """
+        from unittest.mock import patch
+
+        from monitor.models import GPU, GPUCluster, GPUNode, GPUPricing
+        from monitor.services.cost_engine import compute_cost_snapshot
+
+        GPUPricing.objects.create(
+            gpu_model_pattern="H100", hourly_rate="3.50",
+            provider="test", pricing_type="on_demand",
+        )
+
+        org_a = _make_org("cost-a")
+        org_b = _make_org("cost-b")
+
+        for org, hn in ((org_a, "a-node"), (org_b, "b-node")):
+            cluster = GPUCluster.objects_unscoped.create(organization=org, name=f"{hn}-cluster")
+            node = GPUNode.objects_unscoped.create(
+                organization=org, cluster=cluster,
+                hostname=hn, gpu_count=1, gpu_type="H100",
+            )
+            GPU.objects_unscoped.create(
+                organization=org, node=node,
+                uuid=f"GPU-{hn.upper()}-1", gpu_index=0,
+                current_model_name="H100 SXM", status="healthy",
+                current_utilization=50.0,
+            )
+
+        # Count existing snapshot rows before the task runs
+        from django.db import connection
+        with connection.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM cost_snapshots")
+            before_count = cur.fetchone()[0]
+
+        # Patch the cost_engine write path to raise on the second call (org B's insert).
+        # The task patches at the module level — we'll intercept whichever function
+        # cost_engine uses for bulk insert (execute_values on Postgres, or the
+        # executemany fallback on SQLite).
+        call_counter = {"n": 0}
+
+        from monitor.services import cost_engine as ce_module
+
+        # Determine which bulk-insert function the module uses, and patch it.
+        # If execute_values is hoisted to module level and not None, patch that.
+        # Otherwise patch connection.cursor's executemany behavior via a spy.
+        if getattr(ce_module, "execute_values", None) is not None and connection.vendor == "postgresql":
+            target_name = "execute_values"
+            real_func = ce_module.execute_values
+
+            def flaky(cur, sql, rows, page_size=1000):
+                call_counter["n"] += 1
+                if call_counter["n"] == 2:
+                    raise RuntimeError("simulated org B insert failure")
+                return real_func(cur, sql, rows, page_size=page_size)
+
+            patcher = patch.object(ce_module, "execute_values", flaky)
+        else:
+            # SQLite path: patch connection.cursor().executemany via cost_engine
+            # Intercept via a cursor wrapper is invasive; instead, we wrap the
+            # whole insert branch by patching `connection` temporarily.
+            # Simpler approach: patch `compute_cost_snapshot`-internal helper
+            # if any exists, or skip this test on SQLite.
+            self.skipTest(
+                "Per-org rollback test requires psycopg2 execute_values patching; "
+                "skipping on SQLite where executemany is used instead."
+            )
+            return
+
+        with patcher:
+            try:
+                compute_cost_snapshot()
+            except RuntimeError:
+                pass  # The per-org except block should have caught this already
+
+        with connection.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM cost_snapshots")
+            after_count = cur.fetchone()[0]
+
+        # Exactly one org's rows should be committed (org A), not both, not neither.
+        self.assertEqual(after_count - before_count, 1,
+                         "Expected org A's snapshot to commit and org B's to roll back")
