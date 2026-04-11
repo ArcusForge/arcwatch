@@ -395,7 +395,7 @@ def accept_invite(request, token):
     invite = get_object_or_404(Invite, token=token)
 
     if invite.is_accepted:
-        return redirect('/accounts/login/')
+        return redirect('login')
 
     if invite.is_expired:
         return render(request, 'monitor/accept_invite.html', {
@@ -422,7 +422,7 @@ def accept_invite(request, token):
             invite.accepted_at = tz.now()
             invite.save(update_fields=['accepted_at'])
             login(request, user)
-            return redirect('/dashboard/')
+            return redirect('monitor:gpu_fleet_dashboard')
     else:
         form = AcceptInviteForm()
 
