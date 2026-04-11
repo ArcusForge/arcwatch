@@ -326,3 +326,27 @@ class AlertRuleFormSlackValidatorTest(TestCase):
             'slack_webhook_url': '',
         })
         self.assertTrue(form.is_valid(), f"Empty slack URL should be valid: {form.errors}")
+
+
+# ── Task 8: settings_api_keys @require_admin defense-in-depth ────────────────
+
+class SettingsApiKeysRequireAdminTest(TestCase):
+    def setUp(self):
+        self.org = _make_org("apikey-test")
+
+    def test_operator_cannot_post_to_settings_api_keys(self):
+        user = _make_user_with_role("op-apikey", "operator", self.org)
+        self.client.force_login(user)
+        response = self.client.post("/settings/api-keys/", {
+            "name": "test-key", "scopes": ["ingest"],
+        })
+        self.assertEqual(response.status_code, 403)
+
+    def test_admin_can_post_to_settings_api_keys(self):
+        user = _make_user_with_role("admin-apikey", "admin", self.org)
+        self.client.force_login(user)
+        response = self.client.post("/settings/api-keys/", {
+            "name": "test-key", "scopes": ["ingest"],
+        })
+        # Success path renders template with new_raw_key or redirects.
+        self.assertIn(response.status_code, (200, 302))

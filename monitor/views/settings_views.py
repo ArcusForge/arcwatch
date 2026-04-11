@@ -41,7 +41,7 @@ def _is_admin(user):
 
 @login_required
 def settings_root(request):
-    return redirect('/settings/api-keys/')
+    return redirect('monitor:settings_api_keys')
 
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
@@ -53,7 +53,14 @@ def settings_api_keys(request):
     new_raw_key = None
 
     if request.method == 'POST':
-        if not is_admin:
+        # Defense-in-depth: both the _is_admin() helper and an inline role
+        # tuple check are enforced for write requests. If _is_admin is ever
+        # accidentally loosened, the explicit role check still blocks.
+        try:
+            role_ok = request.user.profile.role in ('admin', 'owner')
+        except AttributeError:
+            role_ok = False
+        if not is_admin or not role_ok:
             return HttpResponseForbidden("Admin access required.")
         form = APIKeyCreateForm(request.POST)
         if form.is_valid():
@@ -88,7 +95,7 @@ def revoke_api_key(request, key_id):
         return render(request, 'monitor/fragments/api_key_row.html', {
             'key': api_key, 'is_admin': True,
         })
-    return redirect('/settings/api-keys/')
+    return redirect('monitor:settings_api_keys')
 
 
 # ── Alert Rules ───────────────────────────────────────────────────────────────
@@ -109,7 +116,7 @@ def settings_alert_rules(request):
 @require_admin
 def create_alert_rule(request):
     if request.method != 'POST':
-        return redirect('/settings/alert-rules/')
+        return redirect('monitor:settings_alert_rules')
     org = _get_org(request.user)
     if org is None:
         return HttpResponseForbidden("No organization.")
@@ -118,7 +125,7 @@ def create_alert_rule(request):
         rule = form.save(commit=False)
         rule.organization = org
         rule.save()
-        return redirect('/settings/alert-rules/')
+        return redirect('monitor:settings_alert_rules')
     # Re-render page with form errors
     return render(request, 'monitor/settings_alert_rules.html', {
         'active_tab': 'alert-rules',
@@ -177,14 +184,14 @@ def settings_resources(request):
 @require_admin
 def create_cluster(request):
     if request.method != 'POST':
-        return redirect('/settings/resources/')
+        return redirect('monitor:settings_resources')
     org = _get_org(request.user)
     if org is None:
         return HttpResponseForbidden("No organization.")
     form = GPUClusterForm(request.POST)
     if form.is_valid():
         GPUCluster.objects_unscoped.create(organization=org, name=form.cleaned_data['name'])
-    return redirect('/settings/resources/')
+    return redirect('monitor:settings_resources')
 
 
 @login_required
@@ -235,7 +242,7 @@ def delete_node(request, node_id):
 @require_admin
 def create_endpoint(request):
     if request.method != 'POST':
-        return redirect('/settings/resources/?tab=endpoints')
+        return redirect('monitor:settings_resources')
     org = _get_org(request.user)
     form = InferenceEndpointForm(request.POST)
     if form.is_valid():
@@ -245,7 +252,7 @@ def create_endpoint(request):
             engine=form.cleaned_data['engine'],
             url=form.cleaned_data.get('url', ''),
         )
-    return redirect('/settings/resources/?tab=endpoints')
+    return redirect('monitor:settings_resources')
 
 
 @login_required
@@ -290,6 +297,8 @@ def change_member_role(request, user_id):
     org = _get_org(request.user)
     member = get_object_or_404(DjangoUser, pk=user_id, profile__organization=org)
     role = request.POST.get('role', '')
+    if role == 'owner' and request.user.profile.role != 'owner':
+        return HttpResponseForbidden("Only owners can assign the owner role.")
     if role in ('viewer', 'operator', 'admin', 'owner'):
         member.profile.role = role
         member.profile.save(update_fields=['role'])
@@ -322,7 +331,7 @@ def remove_member(request, user_id):
 @require_admin
 def invite_member(request):
     if request.method != 'POST':
-        return redirect('/settings/members/')
+        return redirect('monitor:settings_members')
     org = _get_org(request.user)
     if org is None:
         return HttpResponseForbidden("No organization.")
@@ -348,7 +357,7 @@ def invite_member(request):
             recipient_list=[invite.email],
             fail_silently=True,
         )
-    return redirect('/settings/members/')
+    return redirect('monitor:settings_members')
 
 
 @login_required
@@ -397,6 +406,11 @@ def accept_invite(request, token):
     if request.method == 'POST':
         form = AcceptInviteForm(request.POST)
         if form.is_valid():
+            if DjangoUser.objects.filter(username=form.cleaned_data['username']).exists():
+                return render(request, 'monitor/accept_invite.html', {
+                    'invite': invite, 'form': form,
+                    'error': 'Username already taken. Please choose another.',
+                })
             user = DjangoUser.objects.create_user(
                 username=form.cleaned_data['username'],
                 email=invite.email,
@@ -444,7 +458,7 @@ def settings_llm_providers(request):
 @require_admin
 def create_llm_provider(request):
     if request.method != "POST":
-        return redirect("/settings/llm-providers/")
+        return redirect("monitor:settings_llm_providers")
     org = _get_org(request.user)
     if org is None:
         return HttpResponseForbidden("No organization.")
@@ -452,17 +466,17 @@ def create_llm_provider(request):
     provider = request.POST.get("provider", "").strip()
     label = request.POST.get("label", "").strip()
     if not raw_key or not provider or not label:
-        return redirect("/settings/llm-providers/")
+        return redirect("monitor:settings_llm_providers")
     valid_providers = {c[0] for c in LLMProvider.PROVIDER_CHOICES}
     if provider not in valid_providers:
-        return redirect("/settings/llm-providers/")
+        return redirect("monitor:settings_llm_providers")
     LLMProvider.objects.create(
         organization=org,
         provider=provider,
         label=label,
         api_key_encrypted=encrypt_api_key(raw_key),
     )
-    return redirect("/settings/llm-providers/")
+    return redirect("monitor:settings_llm_providers")
 
 
 @login_required
@@ -509,7 +523,9 @@ def sync_llm_provider(request, provider_id):
             except Exception as cc_exc:
                 import logging
                 logging.getLogger(__name__).warning("Claude Code sync skipped: %s", cc_exc)
-        return redirect(f"/settings/llm-providers/?synced={count}")
+        from django.urls import reverse
+        return redirect(f"{reverse('monitor:settings_llm_providers')}?synced={count}")
     except Exception as exc:
         import urllib.parse
-        return redirect(f"/settings/llm-providers/?error={urllib.parse.quote(str(exc)[:120])}")
+        from django.urls import reverse
+        return redirect(f"{reverse('monitor:settings_llm_providers')}?error={urllib.parse.quote(str(exc)[:120])}")
