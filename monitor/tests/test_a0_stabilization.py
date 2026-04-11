@@ -72,3 +72,19 @@ class RequireOperatorDecoratorTest(TestCase):
         request = self.factory.post("/x/")
         request.user = AnonymousUser()
         self.assertEqual(self.protected_view(request).status_code, 403)
+
+
+# ── Task 3: onboarding view ───────────────────────────────────────────────────
+
+class NoOrganizationViewTest(TestCase):
+    def test_no_organization_view_renders(self):
+        user = User.objects.create_user(username="orphan-user", password="pw")
+        # user.profile exists via signal but has no organization
+        self.client.force_login(user)
+        response = self.client.get("/no-organization/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"no organization", response.content.lower())
+
+    def test_no_organization_view_url_name_reversible(self):
+        from django.urls import reverse
+        self.assertEqual(reverse("monitor:no_organization"), "/no-organization/")

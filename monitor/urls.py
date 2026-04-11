@@ -1,11 +1,13 @@
 from django.urls import path
 
 from monitor.rest_api import ingest_gpu, ingest_inference
+from monitor.views.health_views import healthz, readyz
 from monitor.views.dashboard_views import gpu_fleet_dashboard, landing
 from monitor.views.inference_views import inference_dashboard
 from monitor.views.cost_views import cost_dashboard
 from monitor.views.alert_views import alerts_dashboard
 from monitor.views.llm_views import llm_dashboard, llm_setup, claude_code_dashboard
+from monitor.views.onboarding_views import no_organization
 from monitor.views.settings_views import (
     settings_root, settings_api_keys, settings_alert_rules,
     settings_resources, settings_members, revoke_api_key,
@@ -22,6 +24,10 @@ from monitor.views.settings_views import (
 app_name = 'monitor'
 
 urlpatterns = [
+    # ── Health checks (no auth required) ─────────────────────────────────────
+    path('api/health/', healthz, name='healthz'),
+    path('api/ready/', readyz, name='readyz'),
+
     # ── Dashboard views ───────────────────────────────────────────────────────
     path('', landing, name='landing'),
     path('dashboard/', gpu_fleet_dashboard, name='gpu_fleet_dashboard'),
@@ -31,6 +37,7 @@ urlpatterns = [
     path('llm/', llm_dashboard, name='llm_dashboard'),
     path('llm/setup/', llm_setup, name='llm_setup'),
     path('claude-code/', claude_code_dashboard, name='claude_code_dashboard'),
+    path('no-organization/', no_organization, name='no_organization'),
 
     # ── Settings views ────────────────────────────────────────────────────────
     path('settings/', settings_root, name='settings_root'),
