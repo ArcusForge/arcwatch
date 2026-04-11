@@ -10,7 +10,7 @@ from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone as tz
 
-from monitor.decorators import is_htmx, require_admin
+from monitor.decorators import is_htmx, require_admin, require_operator
 from monitor.forms import (
     APIKeyCreateForm, AlertRuleForm, InviteForm,
     GPUClusterForm, InferenceEndpointForm, AcceptInviteForm,
@@ -113,7 +113,7 @@ def settings_alert_rules(request):
 
 
 @login_required
-@require_admin
+@require_operator
 def create_alert_rule(request):
     if request.method != 'POST':
         return redirect('monitor:settings_alert_rules')
@@ -138,7 +138,7 @@ def create_alert_rule(request):
 
 
 @login_required
-@require_admin
+@require_operator
 def toggle_alert_rule(request, rule_id):
     if request.method != 'POST':
         return HttpResponse(status=405)

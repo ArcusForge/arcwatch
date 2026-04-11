@@ -350,3 +350,62 @@ class SettingsApiKeysRequireAdminTest(TestCase):
         })
         # Success path renders template with new_raw_key or redirects.
         self.assertIn(response.status_code, (200, 302))
+
+
+# ── Task 9: tiered alert rule RBAC ────────────────────────────────────────────
+
+class TieredAlertRuleRBACTest(TestCase):
+    def setUp(self):
+        self.org = _make_org("alert-rbac")
+
+    def _post_create(self, user):
+        self.client.force_login(user)
+        return self.client.post("/settings/alert-rules/create/", {
+            "name": "test-rule",
+            "metric": "gpu_utilization_low",
+            "threshold_value": 20,
+            "duration_seconds": 300,
+            "slack_webhook_url": "",
+        })
+
+    def _post_toggle(self, user, rule_id):
+        self.client.force_login(user)
+        return self.client.post(f"/settings/alert-rules/{rule_id}/toggle/")
+
+    def _post_delete(self, user, rule_id):
+        self.client.force_login(user)
+        return self.client.post(f"/settings/alert-rules/{rule_id}/delete/")
+
+    def _make_rule(self):
+        from monitor.models import AlertRule
+        return AlertRule.objects.create(
+            organization=self.org, name="existing",
+            metric="gpu_utilization_low", threshold_value=10,
+            duration_seconds=60, is_enabled=True,
+        )
+
+    def test_operator_can_create_alert_rule(self):
+        user = _make_user_with_role("op-create", "operator", self.org)
+        response = self._post_create(user)
+        self.assertIn(response.status_code, (200, 302),
+                      f"Operator should create alert rule; got {response.status_code}")
+
+    def test_operator_can_toggle_alert_rule(self):
+        user = _make_user_with_role("op-toggle", "operator", self.org)
+        rule = self._make_rule()
+        response = self._post_toggle(user, rule.pk)
+        self.assertIn(response.status_code, (200, 302),
+                      f"Operator should toggle alert rule; got {response.status_code}")
+
+    def test_operator_cannot_delete_alert_rule(self):
+        user = _make_user_with_role("op-delete", "operator", self.org)
+        rule = self._make_rule()
+        response = self._post_delete(user, rule.pk)
+        self.assertEqual(response.status_code, 403,
+                         "Delete should stay admin-only under tiered policy")
+
+    def test_viewer_cannot_create_alert_rule(self):
+        user = _make_user_with_role("viewer-create", "viewer", self.org)
+        response = self._post_create(user)
+        self.assertEqual(response.status_code, 403,
+                         "Viewer role is below operator floor")
