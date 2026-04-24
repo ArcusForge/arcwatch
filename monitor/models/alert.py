@@ -1,7 +1,16 @@
 """
 monitor/models/alert.py -- Alert rules and triggered alert events.
 """
+import re
+
+from django.core.exceptions import ValidationError
 from django.db import models
+
+
+def validate_slack_webhook_url(value):
+    """Ensure the webhook URL is a Slack webhook to prevent SSRF."""
+    if value and not re.match(r'^https://hooks\.slack\.com/', value):
+        raise ValidationError('Webhook URL must be a Slack webhook (https://hooks.slack.com/...)')
 
 
 class AlertRule(models.Model):
@@ -30,7 +39,7 @@ class AlertRule(models.Model):
         help_text='Metric must be out-of-bounds for this many seconds before firing',
     )
     is_enabled = models.BooleanField(default=True)
-    slack_webhook_url = models.URLField(blank=True, default='')
+    slack_webhook_url = models.URLField(blank=True, default='', validators=[validate_slack_webhook_url])
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

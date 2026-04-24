@@ -6,7 +6,7 @@ Cost Attribution Dashboard view.
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
 
-from monitor.models import GPU, GPUNode, GPUPricing, Organization
+from monitor.models import GPU, GPUNode, GPUPricing
 from monitor.services.cost_engine import get_cost_summary, get_fleet_cost_rate
 
 
@@ -18,15 +18,8 @@ def cost_dashboard(request):
     Uses the first available organization that has GPUs, falling back
     to the first org overall if none have GPUs yet.
     """
-    # Use the first org that has GPUs; fall back to first org overall
-    org = (
-        Organization.objects
-        .filter(gpus__isnull=False)
-        .distinct()
-        .first()
-    )
-    if org is None:
-        org = Organization.objects.first()
+    # Use the authenticated user's organization
+    org = getattr(getattr(request.user, 'profile', None), 'organization', None)
 
     if org is None:
         return render(request, "monitor/cost_attribution.html", {

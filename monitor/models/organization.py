@@ -115,12 +115,9 @@ def create_user_profile(sender, instance, created, **kwargs):
 
 
 @receiver(post_save, sender=User)
-def save_user_profile(sender, instance, **kwargs):
-    try:
-        if hasattr(instance, 'profile'):
-            instance.profile.save()
-    except Exception:
-        pass
+def save_user_profile(sender, instance, created, **kwargs):
+    """No-op: profile is created by create_user_profile above. Avoid re-save loops."""
+    pass
 
 
 # ── APIKey ────────────────────────────────────────────────────────────────────
@@ -210,6 +207,7 @@ class Invite(models.Model):
     """
     ROLE_CHOICES = [
         ('viewer', 'Viewer'),
+        ('operator', 'Operator'),
         ('admin', 'Admin'),
         ('owner', 'Owner'),
     ]

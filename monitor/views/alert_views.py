@@ -7,7 +7,7 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
 from django.utils import timezone
 
-from monitor.models import AlertEvent, AlertRule, Organization
+from monitor.models import AlertEvent, AlertRule
 
 
 @login_required
@@ -18,7 +18,7 @@ def alerts_dashboard(request):
     Lists all AlertRules (for the first available org) and recent
     AlertEvents.
     """
-    org = Organization.objects.first()
+    org = getattr(getattr(request.user, 'profile', None), 'organization', None)
 
     if org is None:
         return render(request, "monitor/alerts_dashboard.html", {

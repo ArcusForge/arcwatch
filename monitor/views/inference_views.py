@@ -17,11 +17,12 @@ def inference_dashboard(request):
     Lists all InferenceEndpoints (unscoped so demo data is always visible)
     with their current metrics, and computes fleet-level KPIs.
     """
-    endpoints = list(
-        InferenceEndpoint.objects_unscoped
-        .select_related('organization', 'team')
-        .order_by('name')
-    )
+    org = getattr(getattr(request.user, 'profile', None), 'organization', None)
+
+    qs = InferenceEndpoint.objects_unscoped.select_related('organization', 'team').order_by('name')
+    if org is not None:
+        qs = qs.filter(organization=org)
+    endpoints = list(qs)
 
     total_endpoints = len(endpoints)
 

@@ -9,17 +9,14 @@ from django.shortcuts import render
 from monitor.models import LLMUsageRecord, LLMProvider, ClaudeCodeUsageRecord
 
 
-def _get_org(user):
-    try:
-        profile = user.profile
-        return profile.organization
-    except AttributeError:
-        return None
+def _get_org(request):
+    """Return the authenticated user's organization, or None."""
+    return getattr(getattr(request.user, 'profile', None), 'organization', None)
 
 
 @login_required
 def llm_dashboard(request):
-    org = _get_org(request.user)
+    org = _get_org(request)
     today = datetime.date.today()
     year, month = today.year, today.month
     days_in_month = calendar.monthrange(year, month)[1]
@@ -139,7 +136,7 @@ def llm_dashboard(request):
 
 @login_required
 def llm_setup(request):
-    org = _get_org(request.user)
+    org = _get_org(request)
     has_providers = org is not None and LLMProvider.objects.filter(organization=org).exists()
     return render(request, "monitor/llm_setup.html", {
         "has_providers": has_providers,
@@ -148,7 +145,7 @@ def llm_setup(request):
 
 @login_required
 def claude_code_dashboard(request):
-    org = _get_org(request.user)
+    org = _get_org(request)
     today = datetime.date.today()
     year, month = today.year, today.month
     days_in_month = calendar.monthrange(year, month)[1]

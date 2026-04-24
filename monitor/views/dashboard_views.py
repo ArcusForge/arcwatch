@@ -18,12 +18,14 @@ def gpu_fleet_dashboard(request):
     Queries all GPU records, computes aggregate KPIs, and passes a rich
     context to the gpu_fleet_dashboard template.
     """
-    # ── All GPUs with their node ──────────────────────────────────────────────
-    gpus = list(
-        GPU.objects_unscoped
-        .select_related("node")
-        .order_by("node__hostname", "gpu_index")
-    )
+    # ── Resolve the user's organization ─────────────────────────────────────
+    org = getattr(getattr(request.user, 'profile', None), 'organization', None)
+
+    # ── All GPUs for this org ────────────────────────────────────────────────
+    qs = GPU.objects_unscoped.select_related("node").order_by("node__hostname", "gpu_index")
+    if org is not None:
+        qs = qs.filter(organization=org)
+    gpus = list(qs)
 
     total_gpus = len(gpus)
 

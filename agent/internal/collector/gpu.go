@@ -5,6 +5,9 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/arcwatch/agent/internal/types"
@@ -35,7 +38,58 @@ func (c *GPUCollector) Collect() ([]types.GPUMetric, error) {
 	if c.MockMode {
 		return c.collectMock()
 	}
-	return nil, fmt.Errorf("real GPU collection not implemented — use --mock")
+	return c.collectReal()
+}
+
+func (c *GPUCollector) collectReal() ([]types.GPUMetric, error) {
+	cmd := exec.Command("nvidia-smi",
+		"--query-gpu=uuid,index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,clocks.sm,clocks.mem",
+		"--format=csv,noheader,nounits",
+	)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("nvidia-smi failed: %w", err)
+	}
+
+	var metrics []types.GPUMetric
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, ", ")
+		if len(parts) < 10 {
+			continue
+		}
+
+		gpuIndex, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
+		util, _ := strconv.ParseFloat(strings.TrimSpace(parts[3]), 64)
+		memUsed, _ := strconv.Atoi(strings.TrimSpace(parts[4]))
+		memTotal, _ := strconv.Atoi(strings.TrimSpace(parts[5]))
+		temp, _ := strconv.Atoi(strings.TrimSpace(parts[6]))
+		power, _ := strconv.ParseFloat(strings.TrimSpace(parts[7]), 64)
+		smClock, _ := strconv.Atoi(strings.TrimSpace(parts[8]))
+		memClock, _ := strconv.Atoi(strings.TrimSpace(parts[9]))
+
+		metrics = append(metrics, types.GPUMetric{
+			GPUUUID:       strings.TrimSpace(parts[0]),
+			GPUIndex:      gpuIndex,
+			GPUModel:      strings.TrimSpace(parts[2]),
+			Utilization:   util,
+			MemoryUsedMB:  memUsed,
+			MemoryTotalMB: memTotal,
+			Temperature:   temp,
+			PowerWatts:    int(power),
+			SMClockMHz:    smClock,
+			MemClockMHz:   memClock,
+		})
+	}
+
+	if len(metrics) == 0 {
+		return nil, fmt.Errorf("nvidia-smi returned no GPU data")
+	}
+	return metrics, nil
 }
 
 func (c *GPUCollector) collectMock() ([]types.GPUMetric, error) {

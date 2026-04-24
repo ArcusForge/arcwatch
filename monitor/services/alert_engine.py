@@ -10,9 +10,11 @@ Celery periodic task that:
   4. POSTs a Slack notification if a webhook URL is configured.
 """
 import logging
+import re
 
 import requests
 from celery import shared_task
+from django.db.models import F, FloatField, ExpressionWrapper
 
 from monitor.models import AlertEvent, AlertRule, GPU, InferenceEndpoint
 from monitor.services.cost_engine import get_fleet_cost_rate
@@ -64,33 +66,40 @@ def _check_rule(rule: AlertRule) -> tuple:
     threshold = rule.threshold_value
 
     if metric == "gpu_utilization_low":
-        gpus = list(
-            GPU.objects_unscoped.filter(
-                organization=org,
-                current_utilization__isnull=False,
-            )
-        )
-        low = [g for g in gpus if g.current_utilization < threshold]
+        low = list(GPU.objects_unscoped.filter(
+            organization=org,
+            current_utilization__isnull=False,
+            current_utilization__lt=threshold,
+        ).values('uuid', 'current_utilization'))
         if not low:
             return False, None, {}
-        value = min(g.current_utilization for g in low)
+        value = min(g['current_utilization'] for g in low)
         return True, value, {
             "gpu_count": len(low),
-            "gpu_uuids": [g.uuid for g in low],
+            "gpu_uuids": [g['uuid'] for g in low],
         }
 
     if metric == "gpu_memory_high":
-        gpus = [
-            g for g in GPU.objects_unscoped.filter(organization=org)
-            if g.memory_utilization_pct is not None
-        ]
-        high = [g for g in gpus if g.memory_utilization_pct > threshold]
+        high = list(
+            GPU.objects_unscoped.filter(organization=org)
+            .exclude(current_memory_used_mb__isnull=True)
+            .exclude(current_memory_total_mb__isnull=True)
+            .exclude(current_memory_total_mb=0)
+            .annotate(
+                mem_pct=ExpressionWrapper(
+                    F('current_memory_used_mb') * 100.0 / F('current_memory_total_mb'),
+                    output_field=FloatField()
+                )
+            )
+            .filter(mem_pct__gt=threshold)
+            .values('uuid', 'mem_pct')
+        )
         if not high:
             return False, None, {}
-        value = max(g.memory_utilization_pct for g in high)
+        value = max(g['mem_pct'] for g in high)
         return True, value, {
             "gpu_count": len(high),
-            "gpu_uuids": [g.uuid for g in high],
+            "gpu_uuids": [g['uuid'] for g in high],
         }
 
     if metric == "latency_high":
@@ -151,6 +160,10 @@ def _format_message(rule: AlertRule, value) -> str:
 
 
 def _notify_slack(rule: AlertRule, event: AlertEvent) -> None:
+    url = rule.slack_webhook_url
+    if not url or not re.match(r'^https://hooks\.slack\.com/', url):
+        logger.warning("Skipping non-Slack webhook URL for rule %s", rule.name)
+        return
     payload = {
         "text": f"[ArcWatch] Alert: {rule.name}",
         "blocks": [
@@ -164,7 +177,7 @@ def _notify_slack(rule: AlertRule, event: AlertEvent) -> None:
         ],
     }
     try:
-        resp = requests.post(rule.slack_webhook_url, json=payload, timeout=5)
+        resp = requests.post(url, json=payload, timeout=5)
         event.notification_sent = resp.status_code == 200
         event.save(update_fields=["notification_sent"])
     except Exception as exc:

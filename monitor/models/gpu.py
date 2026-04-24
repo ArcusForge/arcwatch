@@ -188,15 +188,15 @@ class GPU(models.Model):
     @property
     def memory_utilization_pct(self):
         """Return memory utilization as a percentage, or None if data is unavailable."""
-        if self.current_memory_used_mb and self.current_memory_total_mb:
+        if self.current_memory_used_mb is not None and self.current_memory_total_mb is not None and self.current_memory_total_mb > 0:
             return round(self.current_memory_used_mb / self.current_memory_total_mb * 100, 1)
         return None
 
     @property
     def is_idle(self):
-        """True when GPU utilization is below 5% and status is active/healthy."""
+        """True when GPU utilization is below 5% and status is healthy."""
         return (
-            self.status in ('healthy', 'active')
+            self.status == 'healthy'
             and self.current_utilization is not None
             and self.current_utilization < 5.0
         )
