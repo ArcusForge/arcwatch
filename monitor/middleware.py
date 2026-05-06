@@ -30,6 +30,7 @@ ALLOWLIST_EXACT = frozenset({
     "/api/health/",
     "/api/ready/",
     "/no-organization/",
+    "/onboarding/enable-demo/",
 })
 
 # `/accounts/` covers Django contrib.auth URLs (login, logout, signup,

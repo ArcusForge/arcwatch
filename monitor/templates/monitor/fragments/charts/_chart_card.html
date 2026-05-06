@@ -1,0 +1,82 @@
+{# Reusable Chart.js card.
+
+  Required context:
+    chart_id    -- unique DOM id slug (e.g. "gpu-util-timeseries")
+    chart_url   -- URL to the JSON endpoint (e.g. "/charts/gpu-util-timeseries/")
+    chart_type  -- Chart.js type: "line", "bar", "doughnut"
+    chart_title -- human title
+    chart_icon  -- font-awesome icon class (e.g. "fa-chart-line")
+    chart_stacked (optional) -- if truthy, stack bar datasets
+
+  Renders:
+    - Card with title + canvas
+    - Inline script that fetches JSON on htmx:load and inits Chart.js
+    - Loading state visible until first render
+#}
+<div class="chart-card" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:24px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:10px;color:var(--text-bright);font-family:var(--head);font-weight:600;font-size:1.05rem;text-transform:uppercase;letter-spacing:1px;">
+      <i class="fas {{ chart_icon }}" style="color:var(--accent)"></i>
+      {{ chart_title }}
+    </div>
+    <span id="chart-status-{{ chart_id }}" style="font-size:.75rem;color:var(--text-dim);">loading…</span>
+  </div>
+  <div style="position:relative;height:240px;">
+    <canvas id="chart-canvas-{{ chart_id }}"></canvas>
+  </div>
+</div>
+
+<script>
+(function(){
+  var ID = "{{ chart_id }}";
+  var URL = "{{ chart_url }}";
+  var TYPE = "{{ chart_type }}";
+  var STACKED = {% if chart_stacked %}true{% else %}false{% endif %};
+
+  function render(payload){
+    var statusEl = document.getElementById("chart-status-" + ID);
+    var canvas = document.getElementById("chart-canvas-" + ID);
+    if (!canvas) return;
+
+    if (!payload.labels || !payload.labels.length){
+      statusEl.textContent = "no data yet";
+      return;
+    }
+    statusEl.textContent = payload.labels.length + " points";
+
+    var ctx = canvas.getContext("2d");
+    if (canvas._chartInstance){ canvas._chartInstance.destroy(); }
+
+    var scales = {
+      x: { ticks: { color: "#64748b", maxTicksLimit: 8 }, grid: { color: "rgba(255,255,255,0.05)" } },
+      y: { ticks: { color: "#64748b" }, grid: { color: "rgba(255,255,255,0.05)" }, beginAtZero: true }
+    };
+    if (STACKED){ scales.x.stacked = true; scales.y.stacked = true; }
+
+    canvas._chartInstance = new Chart(ctx, {
+      type: TYPE,
+      data: payload,
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: "#cbd5e1", font: { size: 11 } } },
+          tooltip: { mode: "index", intersect: false }
+        },
+        scales: scales
+      }
+    });
+  }
+
+  function load(){
+    var statusEl = document.getElementById("chart-status-" + ID);
+    fetch(URL, { credentials: "same-origin" })
+      .then(function(r){ return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(render)
+      .catch(function(err){ if (statusEl) statusEl.textContent = "error: " + err; });
+  }
+
+  // Run once now (page already loaded by the time this script tag executes)
+  load();
+})();
+</script>
